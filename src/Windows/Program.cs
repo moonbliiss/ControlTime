@@ -51,7 +51,7 @@ internal static class Program
                 return;
 
             var settings = existing?.Settings ?? Storage.ReadLegacySettings() ??
-                new Settings([new(60, 180), new(60, 0)], [], Guid.Empty, TimeZoneInfo.Local.Id);
+                new Settings([], [], Guid.Empty, TimeZoneInfo.Local.Id);
             Storage.InitializePrivateDirectory();
             Storage.Save(new Profile(settings, ParentPassword.Create(form.TakePassword())));
             Storage.Save(Attempts.Empty);

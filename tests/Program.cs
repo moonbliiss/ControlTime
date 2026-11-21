@@ -46,6 +46,32 @@ Expect(!new QuietHours(DayOfWeek.Monday, 600, 600).Contains(start.AddDays(1).Dat
 
 settings = settings with { ResetRequest = Guid.NewGuid() };
 Expect(Check(lastGrant.Usage, start.AddHours(5)).Usage is { Session: 0, UsedSeconds: 0 }, "parent reset clears usage");
+var legacy = JsonSerializer.Deserialize<Settings>(
+    """{"Sessions":[{"UseMinutes":60,"BreakMinutes":0}],"QuietHours":[],"ResetRequest":"00000000-0000-0000-0000-000000000000"}""")!;
+Expect(legacy.WithActiveSessions().Sessions[0].UseMinutes == 60 && legacy.ShutDownOnLimit,
+    "old profiles keep their sessions and shutdown behavior");
+
+var weekend = new Scenario(Guid.NewGuid(), "Weekend", [new(90, 0)]);
+var unlimited = new Scenario(Guid.NewGuid(), "Unlimited", []);
+var scenarios = new[] { legacy.GetScenarios()[0], weekend, unlimited };
+var multi = (legacy with { Scenarios = scenarios, ActiveScenarioId = weekend.Id, ShutDownOnLimit = false })
+    .WithActiveSessions();
+Expect(multi.Sessions[0].UseMinutes == 90 && !multi.ShutDownOnLimit, "only the active scenario is applied");
+var roundTrip = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(multi))!.WithActiveSessions();
+Expect(roundTrip.GetScenarios().Length == 3 && roundTrip.GetActiveScenarioId() == weekend.Id,
+    "saved scenarios survive serialization");
+
+var free = (multi with { ActiveScenarioId = unlimited.Id, DailyShutdownMinute = 20 * 60 }).WithActiveSessions();
+var beforeCutoff = Policy.Evaluate(free, null, start.AddHours(9), zone, true);
+Expect(beforeCutoff.Allowed && beforeCutoff.Usage.UsedSeconds == 0, "an empty scenario imposes no activity limit");
+var afterCutoff = Policy.Evaluate(free, beforeCutoff.Usage, start.AddHours(10), zone, true);
+Expect(!afterCutoff.Allowed && afterCutoff.ForceShutdown,
+    "the separate daily cutoff shuts down even when ordinary time limits only log off");
+Expect(Policy.Evaluate(free, afterCutoff.Usage, start.AddDays(1), zone, true).Allowed,
+    "a daily cutoff expires at midnight");
+var quiet = free with { QuietHours = [new(DayOfWeek.Monday, 600, 660)] };
+Expect(!Policy.Evaluate(quiet, null, start, zone, true).Allowed, "quiet hours still apply to an empty scenario");
+
 var mode = new AccessMode();
 mode.UpdateSession(1);
 Expect(mode.SecondsBeforeShutdown(true, 0) is null, "normal child access");

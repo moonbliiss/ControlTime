@@ -79,13 +79,15 @@ internal sealed class ControlService : ServiceBase
                         int? remaining = configured
                             ? mode.SecondsBeforeShutdown(false, Environment.TickCount64)
                             : null;
+                        bool shutDown = settingsForEditing?.ShutDownOnLimit ?? true;
+                        string action = shutDown ? "Выключение" : "Выход из Windows";
                         string message = remaining is int seconds
-                            ? $"Не удалось проверить лимит. Выключение через {seconds} с."
+                            ? $"Не удалось проверить лимит. {action} через {seconds} с."
                             : "Ошибка проверки ограничений ControlTime.";
                         status = new(configured, mode.IsParent, remaining is not null,
                             message + " " + error.Message, settingsForEditing);
                         if (remaining == 0 && activeSession is int sessionId && !shutdownRequested)
-                            Enforce(sessionId);
+                            Enforce(sessionId, shutDown);
                     }
                 }
             } while (await timer.WaitForNextTickAsync(token));
@@ -208,7 +210,7 @@ internal sealed class ControlService : ServiceBase
             return status with { Error = "Отсутствует расписание." };
         try
         {
-            settings.Validate();
+            settings = settings.WithActiveSessions();
             _ = settings.GetTimeZone();
         }
         catch (Exception error) when (error is InvalidDataException or TimeZoneNotFoundException)
@@ -216,7 +218,8 @@ internal sealed class ControlService : ServiceBase
             return status with { Error = error.Message };
         }
 
-        Guid revision = request.ResetToday ? Guid.NewGuid() : profile.Settings.ResetRequest;
+        bool switchedScenario = profile.Settings.GetActiveScenarioId() != settings.GetActiveScenarioId();
+        Guid revision = request.ResetToday || switchedScenario ? Guid.NewGuid() : profile.Settings.ResetRequest;
         settings = settings with { ResetRequest = revision };
         Storage.Save(profile with { Settings = settings });
         return status = status with { Settings = settings };
@@ -260,8 +263,8 @@ internal sealed class ControlService : ServiceBase
         }
 
         configured = true;
-        var settings = profile.Settings;
-        settingsForEditing = settings;
+        settingsForEditing = profile.Settings;
+        var settings = profile.Settings.WithActiveSessions();
 
         var sessions = Sessions.List();
         int console = Sessions.ActiveConsole;
@@ -275,21 +278,22 @@ internal sealed class ControlService : ServiceBase
             Storage.Save(decision.Usage);
 
         int? remaining = mode.SecondsBeforeShutdown(decision.Allowed, Environment.TickCount64);
+        bool shutDown = settings.ShutDownOnLimit || decision.ForceShutdown;
         status = new(true, mode.IsParent, remaining is not null,
-            Describe(settings, decision, remaining), settings);
+            Describe(settings, decision, remaining, shutDown), settings);
         if (remaining is null)
             shutdownRequested = false;
         if (remaining != 0 || shutdownRequested || current is null)
             return;
 
-        Enforce(current.Id);
+        Enforce(current.Id, shutDown);
     }
 
-    private void Enforce(int sessionId)
+    private void Enforce(int sessionId, bool shutDown)
     {
         try
         {
-            if (Sessions.List().Any(other => other.Id != sessionId))
+            if (!shutDown || Sessions.List().Any(other => other.Id != sessionId))
                 Sessions.LogOff(sessionId);
             else
                 Sessions.ShutDown();
@@ -301,18 +305,22 @@ internal sealed class ControlService : ServiceBase
         }
     }
 
-    private string Describe(Settings settings, Decision decision, int? remaining)
+    private string Describe(Settings settings, Decision decision, int? remaining, bool shutDown)
     {
         if (mode.IsParent)
             return "Родительский режим включён. Детское время не расходуется.";
         if (remaining is int seconds)
-            return $"{decision.Reason} Выключение через {seconds} с.";
+            return $"{decision.Reason} {(shutDown ? "Выключение" : "Выход из Windows")} через {seconds} с.";
         if (!decision.Allowed)
             return decision.Reason;
+
+        var name = settings.GetScenarios().Single(s => s.Id == settings.GetActiveScenarioId()).Name;
+        if (settings.Sessions.Length == 0)
+            return $"Детский режим · {name}. Лимита занятий нет.";
 
         var usage = decision.Usage;
         int secondsLeft = settings.Sessions[usage.Session].UseMinutes * 60 - usage.UsedSeconds;
         var left = TimeSpan.FromSeconds(secondsLeft);
-        return $"Детский режим. Занятие {usage.Session + 1} из {settings.Sessions.Length}. Осталось {(int)left.TotalHours:00}:{left.Minutes:00}:{left.Seconds:00}.";
+        return $"Детский режим · {name}. Занятие {usage.Session + 1} из {settings.Sessions.Length}. Осталось {(int)left.TotalHours:00}:{left.Minutes:00}:{left.Seconds:00}.";
     }
 }

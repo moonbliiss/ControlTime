@@ -4,12 +4,12 @@ namespace ControlTime;
 
 internal sealed class Dashboard : Form
 {
-    private readonly Label message = new() { AutoSize = true, Padding = new Padding(2, 4, 2, 12) };
+    private readonly Label message = new() { AutoSize = true, MaximumSize = new Size(560, 0), Padding = new Padding(2, 4, 2, 12) };
     private readonly Label feedback = new() { AutoSize = true, ForeColor = Color.DarkRed };
     private readonly TextBox password = new() { UseSystemPasswordChar = true, MaxLength = 128, Width = 325 };
     private readonly Button unlock = new() { Text = "Включить родительский режим", AutoSize = true };
     private readonly Button endParent = new() { Text = "Вернуться в детский режим", AutoSize = true };
-    private readonly Button preferences = new() { Text = "Расписание", AutoSize = true };
+    private readonly Button preferences = new() { Text = "Настройки", AutoSize = true };
     private readonly Button initialize = new() { Text = "Задать пароль родителя", AutoSize = true };
     private readonly System.Windows.Forms.Timer refresh = new() { Interval = 500 };
     private readonly NotifyIcon tray;

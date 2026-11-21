@@ -88,13 +88,30 @@ try {
     if (-not $status.ParentMode -or $status.Error) {
         throw "Parent mode unavailable: $($status.Message) $($status.Error)"
     }
-    $settings.Sessions[0].UseMinutes = 45
+    $secondId = [Guid]::NewGuid().ToString()
+    $settings.Scenarios = @(
+        @{ Id = [Guid]::Empty.ToString(); Name = 'Original'; Sessions = $settings.Sessions },
+        @{ Id = $secondId; Name = 'Weekend'; Sessions = @(@{ UseMinutes = 45; BreakMinutes = 0 }) }
+    )
+    $settings.ActiveScenarioId = $secondId
+    $settings.ShutDownOnLimit = $false
+    $settings.DailyShutdownMinute = 1320
     $status = Invoke-ControlTime -Command save -Password $password -Settings $settings
     if ($status.Error -or $status.Settings.Sessions[0].UseMinutes -ne 45) {
-        throw "Schedule not saved: $($status.Message) $($status.Error)"
+        throw "Active scenario not applied: $($status.Message) $($status.Error)"
     }
     $saved = Get-Content -Raw -LiteralPath $profilePath | ConvertFrom-Json
-    if ($saved.Settings.Sessions[0].UseMinutes -ne 45) { throw 'Updated schedule was not persisted' }
+    if ($saved.Settings.Scenarios.Count -ne 2 -or $saved.Settings.ActiveScenarioId -ne $secondId -or
+        $saved.Settings.Sessions[0].UseMinutes -ne 45 -or $saved.Settings.ShutDownOnLimit -or
+        $saved.Settings.DailyShutdownMinute -ne 1320 -or $saved.Settings.ResetRequest -eq [Guid]::Empty.ToString()) {
+        throw 'Scenarios, reset or shutdown preferences were not persisted'
+    }
+    $revision = $saved.Settings.ResetRequest
+    $settings.Scenarios[1].Name = 'Weekend renamed'
+    $status = Invoke-ControlTime -Command save -Password $password -Settings $settings
+    if ($status.Error -or $status.Settings.ResetRequest -ne $revision) {
+        throw 'Renaming the active scenario should keep daily progress'
+    }
 } catch {
     Write-Host "::error::$($_.Exception.GetBaseException().Message)"
     Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'ControlTime' } -MaxEvents 3 -ErrorAction SilentlyContinue |
