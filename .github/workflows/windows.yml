@@ -71,6 +71,7 @@ jobs:
       - name: Read delayed replies from the installed service
         shell: pwsh
         run: |
+          $phase = 'preparing the pipe client'
           try {
             $rights = [System.IO.Pipes.PipeAccessRights]'ReadWrite, ReadPermissions, Synchronize'
             $request = [Text.Encoding]::UTF8.GetBytes('{"Command":"status"}')
@@ -82,21 +83,25 @@ jobs:
                 [System.Security.Principal.TokenImpersonationLevel]::Anonymous,
                 [System.IO.HandleInheritability]::None)
               try {
+                $phase = "connecting (request $attempt)"
                 $pipe.ConnectAsync($timeout.Token).GetAwaiter().GetResult()
+                $phase = "checking pipe ownership (request $attempt)"
                 $acl = [System.IO.Pipes.PipesAclExtensions]::GetAccessControl($pipe)
                 if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-18') {
                   throw 'The pipe is not owned by LocalSystem'
                 }
 
+                $phase = "sending the status request (request $attempt)"
                 $header = [BitConverter]::GetBytes([int]$request.Length)
                 $pipe.Write($header, 0, $header.Length)
                 $pipe.Write($request, 0, $request.Length)
                 Start-Sleep -Milliseconds 300
-                $pipe.ReadExactlyAsync($header, 0, $header.Length, $timeout.Token).GetAwaiter().GetResult()
+                $phase = "reading the status response (request $attempt)"
+                $pipe.ReadExactlyAsync($header, 0, $header.Length, $timeout.Token).AsTask().GetAwaiter().GetResult()
                 $length = [BitConverter]::ToInt32($header, 0)
                 if ($length -lt 1 -or $length -gt 65536) { throw "Invalid response size: $length" }
                 $reply = [byte[]]::new($length)
-                $pipe.ReadExactlyAsync($reply, 0, $reply.Length, $timeout.Token).GetAwaiter().GetResult()
+                $pipe.ReadExactlyAsync($reply, 0, $reply.Length, $timeout.Token).AsTask().GetAwaiter().GetResult()
                 $status = [Text.Encoding]::UTF8.GetString($reply) | ConvertFrom-Json
                 if ($status.Configured -ne $false -or -not $status.Message) {
                   throw 'Expected an unconfigured status from the installed service'
@@ -107,7 +112,7 @@ jobs:
               }
             }
           } catch {
-            Write-Host "::error::$($_.Exception.Message)"
+            Write-Host "::error::${phase}: $($_.Exception.Message)"
             exit 1
           }
       - name: Remove ControlTime
