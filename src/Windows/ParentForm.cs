@@ -284,7 +284,8 @@ internal sealed class ParentForm : Form
     {
         var start = TimeInput(20 * 60);
         var end = TimeInput(10 * 60);
-        var day = new ComboBox { Width = 155, DropDownStyle = ComboBoxStyle.DropDownList, DataSource = Days };
+        var day = new ComboBox { Width = 155, DropDownStyle = ComboBoxStyle.DropDownList };
+        day.Items.AddRange(Days);
         day.SelectedIndex = (int)DayOfWeek.Monday;
         var fields = new List<Control>();
         if (!everyDay)
