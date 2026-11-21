@@ -132,6 +132,9 @@ internal sealed class ControlService : ServiceBase
                 lock (sync)
                     response = Respond(session, request);
                 await ServiceChannel.Write(pipe, response, timeout.Token).ConfigureAwait(false);
+
+                // Disconnect discards unread bytes. The client closes its end after reading the reply.
+                await pipe.ReadAsync(new byte[1], timeout.Token).ConfigureAwait(false);
             }
             catch (Exception error) when (error is IOException or OperationCanceledException or JsonException)
             {

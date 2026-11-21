@@ -68,6 +68,48 @@ jobs:
             Write-Host "::error::$($_.Exception.Message)"
             exit 1
           }
+      - name: Read delayed replies from the installed service
+        shell: pwsh
+        run: |
+          try {
+            $rights = [System.IO.Pipes.PipeAccessRights]'ReadWrite, ReadPermissions, Synchronize'
+            $request = [Text.Encoding]::UTF8.GetBytes('{"Command":"status"}')
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              $timeout = [Threading.CancellationTokenSource]::new([TimeSpan]::FromSeconds(5))
+              $pipe = [System.IO.Pipes.NamedPipeClientStream]::new(
+                '.', 'ControlTime.Parent.v2', $rights,
+                [System.IO.Pipes.PipeOptions]::Asynchronous,
+                [System.Security.Principal.TokenImpersonationLevel]::Anonymous,
+                [System.IO.HandleInheritability]::None)
+              try {
+                $pipe.ConnectAsync($timeout.Token).GetAwaiter().GetResult()
+                $acl = [System.IO.Pipes.PipesAclExtensions]::GetAccessControl($pipe)
+                if ($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-18') {
+                  throw 'The pipe is not owned by LocalSystem'
+                }
+
+                $header = [BitConverter]::GetBytes([int]$request.Length)
+                $pipe.Write($header, 0, $header.Length)
+                $pipe.Write($request, 0, $request.Length)
+                Start-Sleep -Milliseconds 300
+                $pipe.ReadExactlyAsync($header, 0, $header.Length, $timeout.Token).GetAwaiter().GetResult()
+                $length = [BitConverter]::ToInt32($header, 0)
+                if ($length -lt 1 -or $length -gt 65536) { throw "Invalid response size: $length" }
+                $reply = [byte[]]::new($length)
+                $pipe.ReadExactlyAsync($reply, 0, $reply.Length, $timeout.Token).GetAwaiter().GetResult()
+                $status = [Text.Encoding]::UTF8.GetString($reply) | ConvertFrom-Json
+                if ($status.Configured -ne $false -or -not $status.Message) {
+                  throw 'Expected an unconfigured status from the installed service'
+                }
+              } finally {
+                $pipe.Dispose()
+                $timeout.Dispose()
+              }
+            }
+          } catch {
+            Write-Host "::error::$($_.Exception.Message)"
+            exit 1
+          }
       - name: Remove ControlTime
         if: always()
         shell: pwsh

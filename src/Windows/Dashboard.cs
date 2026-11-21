@@ -84,6 +84,7 @@ internal sealed class Dashboard : Form
         tray.DoubleClick += (_, _) => Reveal();
 
         Apply(new Status(false, false, false, "Подключение к службе ControlTime…"));
+        initialize.Visible = false;
         Shown += async (_, _) =>
         {
             if (startHidden)
@@ -126,6 +127,7 @@ internal sealed class Dashboard : Form
         catch (Exception)
         {
             message.Text = "Служба ControlTime недоступна. Проверяем подключение…";
+            initialize.Visible = false;
         }
         finally
         {
