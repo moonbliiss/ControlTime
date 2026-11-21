@@ -44,6 +44,30 @@ jobs:
             Write-Host "::error::Setup exited with $($install.ExitCode)"
             exit 1
           }
+      - name: Upgrade while the application is running
+        shell: pwsh
+        run: |
+          $running = $null
+          try {
+            $installedApp = Join-Path $env:ProgramFiles 'ControlTime\app\ControlTime.exe'
+            $running = Start-Process -FilePath $installedApp -ArgumentList '--tray' -PassThru
+            if (-not $running.WaitForInputIdle(15000) -or $running.HasExited) {
+              throw 'The installed dashboard did not start'
+            }
+
+            $installer = (Resolve-Path ControlTime-Setup-x64.exe).Path
+            $upgrade = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+            if ($upgrade.ExitCode -ne 0) { throw "Upgrade exited with $($upgrade.ExitCode)" }
+            if (-not $running.HasExited) { throw 'The previous dashboard is still running' }
+          } catch {
+            Write-Host "::error::$($_.Exception.GetBaseException().Message)"
+            exit 1
+          } finally {
+            if ($running) {
+              if (-not $running.HasExited) { Stop-Process -Id $running.Id -Force }
+              $running.Dispose()
+            }
+          }
       - name: Verify service registration and startup
         shell: pwsh
         run: |

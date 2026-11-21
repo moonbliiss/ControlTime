@@ -77,6 +77,33 @@ FunctionEnd
     ${EndIf}
 !macroend
 
+!macro CloseInstalledApplication
+  IfFileExists "$INSTDIR\app\ControlTime.exe" 0 done
+  System::Call 'kernel32::SetEnvironmentVariableW(w "CONTROLTIME_SETUP_TARGET", w "$INSTDIR\app\ControlTime.exe") i.r0'
+  ${If} $0 == 0
+    Abort "Не удалось подготовить обновление ControlTime."
+  ${EndIf}
+
+  ; The installer is 32-bit. Use native PowerShell to inspect the 64-bit app's executable path.
+  nsExec::ExecToStack /TIMEOUT=20000 '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$$ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop; $$target = $$env:CONTROLTIME_SETUP_TARGET; $$name = [IO.Path]::GetFileNameWithoutExtension($$target); foreach ($$process in (Get-Process -Name $$name -ErrorAction SilentlyContinue)) { if ($$process.Path -ne $$target) { continue }; try { $$process.Kill() } catch { if (-not $$process.HasExited) { throw } }; if (-not $$process.WaitForExit(10000)) { exit 2 } }"'
+  Pop $0
+  Pop $1
+  System::Call 'kernel32::SetEnvironmentVariableW(w "CONTROLTIME_SETUP_TARGET", p 0)'
+  ${If} $0 != "0"
+    DetailPrint "$1"
+    Abort "Не удалось закрыть установленное приложение ControlTime."
+  ${EndIf}
+  done:
+!macroend
+
+Function CloseApplication
+  !insertmacro CloseInstalledApplication
+FunctionEnd
+
+Function un.CloseApplication
+  !insertmacro CloseInstalledApplication
+FunctionEnd
+
 Function StopService
   !insertmacro StopControlTime
 FunctionEnd
@@ -87,6 +114,7 @@ FunctionEnd
 
 Section "ControlTime"
   Call StopService
+  Call CloseApplication
   SetOutPath "$INSTDIR\app"
   File /r /x "*.pdb" "..\artifacts\windows\*"
   SetOutPath "$INSTDIR"
@@ -120,6 +148,7 @@ SectionEnd
 
 Section "Uninstall"
   Call un.StopService
+  Call un.CloseApplication
   ExecWait '"$SYSDIR\sc.exe" delete ControlTime' $0
   ${If} $0 != 0
   ${AndIf} $0 != 1060
