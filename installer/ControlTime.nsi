@@ -81,16 +81,18 @@ FunctionEnd
   IfFileExists "$INSTDIR\app\ControlTime.exe" 0 done
   System::Call 'kernel32::SetEnvironmentVariableW(w "CONTROLTIME_SETUP_TARGET", w "$INSTDIR\app\ControlTime.exe") i.r0'
   ${If} $0 == 0
+    SetErrorLevel 23
     Abort "Не удалось подготовить обновление ControlTime."
   ${EndIf}
 
   ; The installer is 32-bit. Use native PowerShell to inspect the 64-bit app's executable path.
-  nsExec::ExecToStack /TIMEOUT=20000 '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$$ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop; $$target = $$env:CONTROLTIME_SETUP_TARGET; $$name = [IO.Path]::GetFileNameWithoutExtension($$target); foreach ($$process in (Get-Process -Name $$name -ErrorAction SilentlyContinue)) { if ($$process.Path -ne $$target) { continue }; try { $$process.Kill() } catch { if (-not $$process.HasExited) { throw } }; if (-not $$process.WaitForExit(10000)) { exit 2 } }"'
+  nsExec::ExecToStack /TIMEOUT=20000 '"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "$$ErrorActionPreference = [System.Management.Automation.ActionPreference]::Stop; $$target = $$env:CONTROLTIME_SETUP_TARGET; $$name = [IO.Path]::GetFileNameWithoutExtension($$target); foreach ($$process in (Get-Process -Name $$name -ErrorAction SilentlyContinue)) { if ($$process.SessionId -eq 0 -or $$process.Path -ne $$target) { continue }; try { $$process.Kill() } catch { if (-not $$process.HasExited) { throw } }; if (-not $$process.WaitForExit(10000)) { exit 2 } }; exit 0"'
   Pop $0
   Pop $1
   System::Call 'kernel32::SetEnvironmentVariableW(w "CONTROLTIME_SETUP_TARGET", p 0)'
   ${If} $0 != "0"
     DetailPrint "$1"
+    SetErrorLevel 23
     Abort "Не удалось закрыть установленное приложение ControlTime."
   ${EndIf}
   done:
@@ -113,8 +115,8 @@ Function un.StopService
 FunctionEnd
 
 Section "ControlTime"
-  Call StopService
   Call CloseApplication
+  Call StopService
   SetOutPath "$INSTDIR\app"
   File /r /x "*.pdb" "..\artifacts\windows\*"
   SetOutPath "$INSTDIR"
@@ -147,8 +149,8 @@ Section "ControlTime"
 SectionEnd
 
 Section "Uninstall"
-  Call un.StopService
   Call un.CloseApplication
+  Call un.StopService
   ExecWait '"$SYSDIR\sc.exe" delete ControlTime' $0
   ${If} $0 != 0
   ${AndIf} $0 != 1060
