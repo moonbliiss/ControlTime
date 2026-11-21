@@ -166,7 +166,7 @@ internal sealed class Dashboard : Form
         password.Visible = value.Configured && !value.ParentMode;
         unlock.Visible = value.Configured && !value.ParentMode;
         endParent.Visible = value.Configured && value.ParentMode;
-        preferences.Visible = value.Configured && !value.Blocked && value.Settings is not null;
+        preferences.Visible = value.Configured && value.Settings is not null;
         initialize.Visible = !value.Configured;
         if (blocked == value.Blocked)
             return;

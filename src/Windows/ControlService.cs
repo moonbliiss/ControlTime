@@ -17,6 +17,7 @@ internal sealed class ControlService : ServiceBase
     private string? lastError;
     private bool shutdownRequested;
     private bool configured;
+    private Settings? settingsForEditing;
     private int? activeSession;
     private Status status = new(false, false, false, "Служба ControlTime запускается.");
 
@@ -81,7 +82,8 @@ internal sealed class ControlService : ServiceBase
                         string message = remaining is int seconds
                             ? $"Не удалось проверить лимит. Выключение через {seconds} с."
                             : "Ошибка проверки ограничений ControlTime.";
-                        status = new(configured, mode.IsParent, remaining is not null, message);
+                        status = new(configured, mode.IsParent, remaining is not null,
+                            message + " " + error.Message, settingsForEditing);
                         if (remaining == 0 && activeSession is int sessionId && !shutdownRequested)
                             Enforce(sessionId);
                     }
@@ -159,7 +161,7 @@ internal sealed class ControlService : ServiceBase
 
         if (request.Command == "status")
             return status;
-        if (session != activeSession || locked.Contains(session))
+        if ((request.Command != "save" && session != activeSession) || locked.Contains(session))
             return status with { Error = "Сеанс Windows ещё не готов. Повторите попытку." };
 
         if (request.Command == "child")
@@ -247,10 +249,6 @@ internal sealed class ControlService : ServiceBase
 
     private void Check()
     {
-        var sessions = Sessions.List();
-        int console = Sessions.ActiveConsole;
-        var current = sessions.Find(session => session.Id == console && session.Active);
-        UpdateSession(current?.Id);
         var profile = Storage.ReadProfile();
         if (profile is null)
         {
@@ -263,6 +261,12 @@ internal sealed class ControlService : ServiceBase
 
         configured = true;
         var settings = profile.Settings;
+        settingsForEditing = settings;
+
+        var sessions = Sessions.List();
+        int console = Sessions.ActiveConsole;
+        var current = sessions.Find(session => session.Id == console && session.Active);
+        UpdateSession(current?.Id);
         bool ready = activeSession is int sessionId && !locked.Contains(sessionId);
         var usage = Storage.ReadUsage();
         var decision = Policy.Evaluate(settings, usage, DateTimeOffset.UtcNow,

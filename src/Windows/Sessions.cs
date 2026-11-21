@@ -1,14 +1,17 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Security.Principal;
-using Microsoft.Win32.SafeHandles;
 
 namespace ControlTime;
 
 internal static class Sessions
 {
-    internal sealed record Session(int Id, string Sid, bool Active);
+    internal sealed record Session(int Id, bool Active);
+
+    private const int WtsActive = 0;
+    private const int WtsConnected = 1;
+    private const int WtsDisconnected = 4;
+    private const int WtsUserName = 5;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct SessionInfo
@@ -30,23 +33,25 @@ internal static class Sessions
             for (int i = 0; i < count; i++)
             {
                 var entry = Marshal.PtrToStructure<SessionInfo>(IntPtr.Add(buffer, i * size));
-                if (entry.Id == 0)
+                if (entry.Id == 0 || entry.State is not (WtsActive or WtsConnected or WtsDisconnected))
                     continue;
 
-                if (!WTSQueryUserToken(entry.Id, out var token))
+                if (!WTSQuerySessionInformationW(IntPtr.Zero, entry.Id, WtsUserName, out var user, out var bytes))
                 {
                     int error = Marshal.GetLastPInvokeError();
-                    token?.Dispose();
-                    if (error is 1008 or 7022) // No user token, or the session ended while enumerating.
+                    if (error is 7022 or 1312) // The session ended while enumerating.
                         continue;
-                    throw new Win32Exception(error);
+                    throw new Win32Exception(error, "Не удалось прочитать сеанс Windows (код " + error + ").");
                 }
 
-                using (token)
-                using (var identity = new WindowsIdentity(token.DangerousGetHandle()))
+                try
                 {
-                    if (identity.User is { } sid)
-                        result.Add(new Session(entry.Id, sid.Value, entry.State == 0));
+                    if (bytes > sizeof(char) && !string.IsNullOrEmpty(Marshal.PtrToStringUni(user)))
+                        result.Add(new Session(entry.Id, entry.State == WtsActive));
+                }
+                finally
+                {
+                    WTSFreeMemory(user);
                 }
             }
         }
@@ -100,7 +105,8 @@ internal static class Sessions
     private static extern void WTSFreeMemory(IntPtr memory);
 
     [DllImport("wtsapi32.dll", SetLastError = true, ExactSpelling = true)]
-    private static extern bool WTSQueryUserToken(int sessionId, out SafeAccessTokenHandle token);
+    private static extern bool WTSQuerySessionInformationW(IntPtr server, int sessionId, int infoClass,
+        out IntPtr buffer, out int bytesReturned);
 
     [DllImport("wtsapi32.dll", SetLastError = true, ExactSpelling = true)]
     private static extern bool WTSLogoffSession(IntPtr server, int sessionId, bool wait);
