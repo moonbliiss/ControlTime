@@ -35,16 +35,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: ControlTime-Setup-x64
-      - name: Check installation, service startup and removal
+      - name: Install ControlTime
         shell: pwsh
         run: |
-          $installer = Resolve-Path ControlTime-Setup-x64.exe
-          $installedPath = Join-Path $env:ProgramFiles 'ControlTime'
-          $startupKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
+          $installer = (Resolve-Path ControlTime-Setup-x64.exe).Path
+          $install = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) {
+            Write-Host "::error::Setup exited with $($install.ExitCode)"
+            exit 1
+          }
+      - name: Verify service registration and startup
+        shell: pwsh
+        run: |
           try {
-            $install = Start-Process $installer -ArgumentList '/S' -Wait -PassThru
-            if ($install.ExitCode -ne 0) { throw "Setup exited with $($install.ExitCode)" }
-
             $service = Get-Service ControlTime
             try {
               $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
@@ -52,20 +55,35 @@ jobs:
               $service.Dispose()
             }
 
-            $app = '"' + (Join-Path $installedPath 'app\ControlTime.exe') + '"'
+            $app = '"' + (Join-Path $env:ProgramFiles 'ControlTime\app\ControlTime.exe') + '"'
             $registered = Get-CimInstance Win32_Service -Filter "Name='ControlTime'"
             if ($registered.PathName -ne "$app --service" -or $registered.StartMode -ne 'Auto' -or $registered.StartName -ne 'LocalSystem') {
-              throw "Unexpected service registration: $($registered.PathName)"
+              throw "Unexpected service registration: $($registered.PathName) / $($registered.StartMode) / $($registered.StartName)"
             }
+            $startupKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
             if ((Get-ItemPropertyValue $startupKey ControlTime) -ne "$app --tray") {
               throw 'Startup for the password window is missing'
             }
-          } finally {
-            $uninstaller = Join-Path $installedPath 'Uninstall.exe'
+          } catch {
+            Write-Host "::error::$($_.Exception.Message)"
+            exit 1
+          }
+      - name: Remove ControlTime
+        if: always()
+        shell: pwsh
+        run: |
+          try {
+            $uninstaller = Join-Path $env:ProgramFiles 'ControlTime\Uninstall.exe'
             if (Test-Path $uninstaller) {
-              $uninstall = Start-Process $uninstaller -ArgumentList '/S' -Wait -PassThru
+              $uninstall = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
               if ($uninstall.ExitCode -ne 0) { throw "Uninstall exited with $($uninstall.ExitCode)" }
             }
+            if (Get-Service ControlTime -ErrorAction SilentlyContinue) { throw 'Service still registered' }
+            $startupKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
+            if ((Get-ItemProperty $startupKey).PSObject.Properties.Name -contains 'ControlTime') {
+              throw 'Startup entry still present'
+            }
+          } catch {
+            Write-Host "::error::$($_.Exception.Message)"
+            exit 1
           }
-          if (Get-Service ControlTime -ErrorAction SilentlyContinue) { throw 'Service still registered' }
-          if (Get-ItemPropertyValue $startupKey ControlTime -ErrorAction SilentlyContinue) { throw 'Startup entry still present' }
