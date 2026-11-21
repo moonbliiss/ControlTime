@@ -6,7 +6,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ControlTime;
 
-internal static partial class Sessions
+internal static class Sessions
 {
     internal sealed record Session(int Id, string Sid, bool Active);
 
@@ -87,35 +87,10 @@ internal static partial class Sessions
             throw new Win32Exception();
     }
 
-    public static SecurityIdentifier ResolveChildAccount(string name)
-    {
-        if (string.IsNullOrWhiteSpace(name) || name.IndexOfAny(['\\', '@', '/']) >= 0)
-            throw new ArgumentException("Введите имя локальной учётной записи ребёнка.");
+    public static int ActiveConsole => unchecked((int)WTSGetActiveConsoleSessionId());
 
-        var sid = (SecurityIdentifier)new NTAccount(Environment.MachineName, name)
-            .Translate(typeof(SecurityIdentifier));
-        var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
-        string adminGroup = ((NTAccount)admins.Translate(typeof(NTAccount))).Value.Split('\\')[^1];
-        int status = NetUserGetLocalGroups(null, name, 0, 1, out IntPtr buffer, -1, out int count, out _);
-        try
-        {
-            if (status != 0)
-                throw new Win32Exception(status);
-            for (int i = 0; i < count; i++)
-            {
-                string? group = Marshal.PtrToStringUni(Marshal.ReadIntPtr(buffer, i * IntPtr.Size));
-                if (string.Equals(group, adminGroup, StringComparison.OrdinalIgnoreCase))
-                    throw new ArgumentException("Учётная запись ребёнка должна быть обычным пользователем.");
-            }
-        }
-        finally
-        {
-            if (buffer != IntPtr.Zero)
-                NetApiBufferFree(buffer);
-        }
-
-        return sid;
-    }
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    private static extern uint WTSGetActiveConsoleSessionId();
 
     [DllImport("wtsapi32.dll", SetLastError = true, ExactSpelling = true)]
     private static extern bool WTSEnumerateSessionsW(IntPtr server, int reserved, int version,
@@ -132,11 +107,4 @@ internal static partial class Sessions
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern bool MoveFileExW(string source, string destination, int flags);
-
-    [DllImport("netapi32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
-    private static extern int NetUserGetLocalGroups(string? server, string user, int level, int flags,
-        out IntPtr buffer, int preferredMaximumLength, out int entriesRead, out int totalEntries);
-
-    [DllImport("netapi32.dll", ExactSpelling = true)]
-    private static extern int NetApiBufferFree(IntPtr buffer);
 }

@@ -7,38 +7,58 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Test the time policy
+      - name: Test time policy and parent authentication
         run: dotnet run --configuration Release --project tests/PolicyChecks.csproj
       - name: Publish the self-contained Windows application
         run: dotnet publish src/Windows/Windows.csproj -c Release -r win-x64 --self-contained true -o artifacts/windows
       - name: Assemble the installer
         run: |
-          & "${env:ProgramFiles(x86)}\NSIS\makensis.exe" /INPUTCHARSET UTF8 installer/ControlTime.nsi
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          sudo apt-get update
+          sudo apt-get install --yes nsis
+          makensis -INPUTCHARSET UTF8 installer/ControlTime.nsi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ControlTime-Setup-x64
+          path: artifacts/ControlTime-Setup-x64.exe
+          if-no-files-found: error
+
+  smoke-test:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ControlTime-Setup-x64
       - name: Check installation, service startup and removal
         shell: pwsh
         run: |
-          $installer = Resolve-Path artifacts/ControlTime-Setup-x64.exe
+          $installer = Resolve-Path ControlTime-Setup-x64.exe
           $installedPath = Join-Path $env:ProgramFiles 'ControlTime'
+          $startupKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
           try {
             $install = Start-Process $installer -ArgumentList '/S' -Wait -PassThru
             if ($install.ExitCode -ne 0) { throw "Setup exited with $($install.ExitCode)" }
+
             $service = Get-Service ControlTime
             try {
               $service.WaitForStatus('Running', [TimeSpan]::FromSeconds(30))
             } finally {
               $service.Dispose()
             }
-            $expected = '"' + (Join-Path $installedPath 'app\ControlTime.exe') + '" --service'
+
+            $app = '"' + (Join-Path $installedPath 'app\ControlTime.exe') + '"'
             $registered = Get-CimInstance Win32_Service -Filter "Name='ControlTime'"
-            if ($registered.PathName -ne $expected -or $registered.StartMode -ne 'Auto' -or $registered.StartName -ne 'LocalSystem') {
+            if ($registered.PathName -ne "$app --service" -or $registered.StartMode -ne 'Auto' -or $registered.StartName -ne 'LocalSystem') {
               throw "Unexpected service registration: $($registered.PathName)"
+            }
+            if ((Get-ItemPropertyValue $startupKey ControlTime) -ne "$app --tray") {
+              throw 'Startup for the password window is missing'
             }
           } finally {
             $uninstaller = Join-Path $installedPath 'Uninstall.exe'
@@ -48,8 +68,4 @@ jobs:
             }
           }
           if (Get-Service ControlTime -ErrorAction SilentlyContinue) { throw 'Service still registered' }
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ControlTime-Setup-x64
-          path: artifacts/ControlTime-Setup-x64.exe
-          if-no-files-found: error
+          if (Get-ItemPropertyValue $startupKey ControlTime -ErrorAction SilentlyContinue) { throw 'Startup entry still present' }

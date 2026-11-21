@@ -3,7 +3,7 @@ using ControlTime;
 
 var zone = TimeZoneInfo.Utc;
 var start = new DateTimeOffset(2026, 11, 23, 10, 0, 0, TimeSpan.Zero);
-var settings = new Settings("child", [new(60, 180), new(60, 0)], [], Guid.Empty);
+var settings = new Settings([new(60, 180), new(60, 0)], [], Guid.Empty);
 settings.Validate();
 
 Decision Check(Usage? usage, DateTimeOffset now, bool active = false) =>
@@ -46,7 +46,43 @@ Expect(!new QuietHours(DayOfWeek.Monday, 600, 600).Contains(start.AddDays(1).Dat
 
 settings = settings with { ResetRequest = Guid.NewGuid() };
 Expect(Check(lastGrant.Usage, start.AddHours(5)).Usage is { Session: 0, UsedSeconds: 0 }, "parent reset clears usage");
-Console.WriteLine("Policy checks passed (first and second hour, restart, breaks, parent mode and quiet hours).");
+var mode = new AccessMode();
+mode.UpdateSession(1);
+Expect(mode.SecondsBeforeShutdown(true, 0) is null, "normal child access");
+Expect(mode.SecondsBeforeShutdown(false, 1000) == 0, "shut down when child time ends");
+mode.UseParentMode();
+Expect(mode.IsParent && mode.SecondsBeforeShutdown(false, 1000) is null, "parent can work during a break");
+mode.UpdateSession(2);
+Expect(!mode.IsParent, "new Windows sign-in starts in child mode");
+Expect(mode.SecondsBeforeShutdown(false, 0) == AccessMode.LoginGraceSeconds,
+    "a blocked sign-in gives the parent time to enter the password");
+mode.UpdateSession(null);
+mode.UpdateSession(3);
+Expect(mode.SecondsBeforeShutdown(false, 5000) == AccessMode.LoginGraceSeconds - 5,
+    "signing out and back in does not reset an active shutdown countdown");
+mode.UseChildMode();
+Expect(mode.SecondsBeforeShutdown(false, 10000) == AccessMode.LoginGraceSeconds - 10,
+    "requesting child mode again does not reset a shutdown countdown");
+Expect(mode.SecondsBeforeShutdown(false, 35000) == 0, "blocked sign-in cannot use more time");
+mode.UseParentMode();
+mode.UseChildMode();
+Expect(!mode.IsParent && mode.SecondsBeforeShutdown(false, 36000) == AccessMode.LoginGraceSeconds,
+    "returning to child mode restores the restriction immediately");
+
+string password = "parent password for test";
+var firstPassword = ParentPassword.Create(password);
+var secondPassword = ParentPassword.Create(password);
+Expect(firstPassword.Matches(password) && !firstPassword.Matches("different password"),
+    "parent password validation");
+Expect(!firstPassword.Salt.SequenceEqual(secondPassword.Salt)
+    && !firstPassword.Hash.SequenceEqual(secondPassword.Hash), "passwords use separate random salts");
+Expect(!ParentPassword.ValidLength("short"), "reject short password");
+var failed = Attempts.Empty.Failed(start);
+Expect(failed.RetryAt == start.AddSeconds(2) && failed.Failed(start).RetryAt == start.AddSeconds(4),
+    "failed password attempts have increasing cooldowns");
+Expect(JsonSerializer.Deserialize<Attempts>(JsonSerializer.Serialize(failed)) == failed,
+    "password retry limit persists after restart");
+Console.WriteLine("Time policy, same-account modes, password validation and retry checks passed.");
 
 static void Expect(bool condition, string description)
 {

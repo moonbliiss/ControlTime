@@ -14,12 +14,12 @@ public sealed record QuietHours(DayOfWeek StartDay, int StartMinute, int EndMinu
     }
 }
 
-public sealed record Settings(string ChildSid, SessionPlan[] Sessions, QuietHours[] QuietHours,
+public sealed record Settings(SessionPlan[] Sessions, QuietHours[] QuietHours,
     Guid ResetRequest, string TimeZoneId = "UTC")
 {
     public void Validate()
     {
-        if (string.IsNullOrWhiteSpace(TimeZoneId) || string.IsNullOrWhiteSpace(ChildSid) || Sessions is null || Sessions.Length is < 1 or > 24
+        if (string.IsNullOrWhiteSpace(TimeZoneId) || Sessions is null || Sessions.Length is < 1 or > 24
             || QuietHours is null || QuietHours.Length > 168
             || Sessions.Any(s => s is null || s.UseMinutes is < 1 or > 1440 || s.BreakMinutes is < 0 or > 1440)
             || QuietHours.Any(s => s is null || !Enum.IsDefined(s.StartDay)

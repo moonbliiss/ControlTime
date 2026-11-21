@@ -13,7 +13,8 @@ ShowUninstDetails show
 
 !define MUI_ABORTWARNING
 !define MUI_FINISHPAGE_RUN "$INSTDIR\app\ControlTime.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "Открыть родительские настройки"
+!define MUI_FINISHPAGE_RUN_PARAMETERS "--setup"
+!define MUI_FINISHPAGE_RUN_TEXT "Задать родительский пароль"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -108,6 +109,7 @@ Section "ControlTime"
     Abort "Не удалось запустить службу ControlTime."
   ${EndIf}
 
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ControlTime" '"$INSTDIR\app\ControlTime.exe" --tray'
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateShortCut "$SMPROGRAMS\ControlTime.lnk" "$INSTDIR\app\ControlTime.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\ControlTime" "DisplayName" "ControlTime"
@@ -124,7 +126,9 @@ Section "Uninstall"
   ${AndIf} $0 != 1072
     Abort "Не удалось удалить службу ControlTime."
   ${EndIf}
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "ControlTime"
   RMDir /r /REBOOTOK "$INSTDIR\app"
+  RMDir /r "$INSTDIR\private"
   Delete "$INSTDIR\Uninstall.exe"
   Delete "$INSTDIR\settings.json"
   Delete "$INSTDIR\usage.json"
