@@ -1,5 +1,7 @@
 # ControlTime
 
+[Скачать установщик ControlTime для Windows 11 x64](https://github.com/moonbliiss/ControlTime/raw/refs/heads/downloads/ControlTime-Setup-x64.exe)
+
 Родительский контроль для Windows 11 x64. Установщик содержит приложение, службу и среду выполнения .NET. На ноутбуке достаточно запустить `ControlTime-Setup-x64.exe` с правами администратора.
 
 ## Настройка
